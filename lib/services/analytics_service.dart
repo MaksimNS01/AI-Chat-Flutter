@@ -122,6 +122,12 @@ class AnalyticsService {
     return efficiency;
   }
 
+  // НОВЫЙ ГЕТТЕР: Возвращает статистику использования по моделям
+  Map<String, Map<String, int>> getModelUsageStatistics() {
+    // Возвращаем копию, чтобы предотвратить внешние изменения
+    return Map.from(_modelUsage);
+  }
+
   // Метод получения статистики по времени ответа
   Map<String, dynamic> getResponseTimeStats() {
     if (_sessionData.isEmpty) return {};
