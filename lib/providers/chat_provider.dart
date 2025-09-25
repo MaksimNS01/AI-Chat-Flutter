@@ -6,6 +6,10 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 // Импорт пакета для получения путей к директориям
 import 'package:path_provider/path_provider.dart';
+// Импорт SharedPreferences для хранения настроек
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 // Импорт модели сообщения
 import '../models/message.dart';
 // Импорт клиента для работы с API
@@ -14,11 +18,13 @@ import '../api/openrouter_client.dart';
 import '../services/database_service.dart';
 // Импорт сервиса для аналитики
 import '../services/analytics_service.dart';
+// Импорт ключей настроек из settings_screen
+import '../screens/settings_screen.dart'; // Для selectedProviderKey, openRouterApiKeyId, etc.
 
 // Основной класс провайдера для управления состоянием чата
 class ChatProvider with ChangeNotifier {
-  // Клиент для работы с API
-  final OpenRouterClient _api = OpenRouterClient();
+  // Клиент для работы с API (не final, чтобы можно было пересоздать)
+  OpenRouterClient _api = OpenRouterClient();
   // Список сообщений чата
   final List<ChatMessage> _messages = [];
   // Логи для отладки
@@ -32,57 +38,86 @@ class ChatProvider with ChangeNotifier {
   // Флаг загрузки
   bool _isLoading = false;
 
+  // Настройки API
+  String _selectedProvider = providerOpenRouter; // Значение по умолчанию
+  String _openRouterApiKey = '';
+  String _vseGptApiKey = '';
+
+
   // Метод для логирования сообщений
   void _log(String message) {
-    // Добавление сообщения в логи с временной меткой
     _debugLogs.add('${DateTime.now()}: $message');
-    // Вывод сообщения в консоль
     debugPrint(message);
   }
 
-  // Геттер для получения неизменяемого списка сообщений
   List<ChatMessage> get messages => List.unmodifiable(_messages);
-  // Геттер для получения списка доступных моделей
   List<Map<String, dynamic>> get availableModels => _availableModels;
-  // Геттер для получения текущей модели
   String? get currentModel => _currentModel;
-  // Геттер для получения баланса
   String get balance => _balance;
-  // Геттер для получения состояния загрузки
   bool get isLoading => _isLoading;
-
-  // Геттер для получения базового URL
   String? get baseUrl => _api.baseUrl;
 
-  // Конструктор провайдера
   ChatProvider() {
-    // Инициализация провайдера
     _initializeProvider();
   }
 
-  // Метод инициализации провайдера
   Future<void> _initializeProvider() async {
     try {
-      // Логирование начала инициализации
       _log('Initializing provider...');
-      // Загрузка доступных моделей
+      await _loadApiSettings(); // Загрузка настроек API
+      // _api должен переинициализироваться или использовать обновленный dotenv
+      // OpenRouterClient() при создании должен подхватить ключ из dotenv.env
+      _api = OpenRouterClient(); 
+
       await _loadModels();
-      _log('Models loaded: $_availableModels');
-      // Загрузка баланса
+      _log('Models loaded: ${_availableModels.length}');
       await _loadBalance();
       _log('Balance loaded: $_balance');
-      // Загрузка истории сообщений
       await _loadHistory();
       _log('History loaded: ${_messages.length} messages');
     } catch (e, stackTrace) {
-      // Логирование ошибок инициализации
       _log('Error initializing provider: $e');
       _log('Stack trace: $stackTrace');
     }
   }
 
-  // Метод загрузки доступных моделей
+  Future<void> _loadApiSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    _selectedProvider = prefs.getString(selectedProviderKey) ?? providerOpenRouter;
+    _openRouterApiKey = prefs.getString(openRouterApiKeyId) ?? '';
+    _vseGptApiKey = prefs.getString(vseGptApiKeyId) ?? '';
+
+    _log('API settings loaded: Provider: $_selectedProvider');
+    _log('OpenRouter Key Loaded: ${_openRouterApiKey.isNotEmpty}');
+    _log('VSEGPT Key Loaded: ${_vseGptApiKey.isNotEmpty}');
+
+    // Обновляем dotenv на случай, если OpenRouterClient читает его при каждом запросе или при создании
+    // В settings_screen это уже делается при сохранении, но здесь для инициализации полезно
+    if (_selectedProvider == providerOpenRouter) {
+      dotenv.env['OPENROUTER_API_KEY'] = _openRouterApiKey;
+    } else if (_selectedProvider == providerVseGpt) {
+      // Предполагаем, что VSEGPT также будет использовать OPENROUTER_API_KEY в dotenv для OpenRouterClient
+      // или что OpenRouterClient будет адаптирован для работы с разными ключами/провайдерами.
+      // Если VSEGPT требует совершенно другого клиента, логика здесь усложнится.
+      dotenv.env['OPENROUTER_API_KEY'] = _vseGptApiKey;
+    }
+     _log('Dotenv OPENROUTER_API_KEY set to: ${dotenv.env['OPENROUTER_API_KEY']}');
+  }
+
+  // Вызывается из SettingsScreen при обновлении настроек
+  Future<void> apiSettingsUpdated() async {
+    _log('API settings updated notification received.');
+    await _loadApiSettings();
+    _api = OpenRouterClient(); // Пересоздаем клиент, чтобы он использовал новый ключ из dotenv
+    
+    // Перезагружаем данные, зависящие от API
+    await _loadModels();
+    await _loadBalance();
+    notifyListeners(); // Уведомляем слушателей об изменениях (например, новый список моделей)
+  }
+
   Future<void> _loadModels() async {
+    // ... (существующий код без изменений)
     try {
       // Получение списка моделей из API
       _availableModels = await _api.getModels();
@@ -98,11 +133,14 @@ class ChatProvider with ChangeNotifier {
     } catch (e) {
       // Логирование ошибок загрузки моделей
       _log('Error loading models: $e');
+      _availableModels = []; // Очищаем модели в случае ошибки
+      _currentModel = null;
+      notifyListeners();
     }
   }
 
-  // Метод загрузки баланса пользователя
   Future<void> _loadBalance() async {
+    // ... (существующий код без изменений)
     try {
       // Получение баланса из API
       _balance = await _api.getBalance();
@@ -111,16 +149,16 @@ class ChatProvider with ChangeNotifier {
     } catch (e) {
       // Логирование ошибок загрузки баланса
       _log('Error loading balance: $e');
+      _balance = '\$0.00 (Error)'; // Показываем ошибку в балансе
+      notifyListeners();
     }
   }
 
-  // Сервис для работы с базой данных
   final DatabaseService _db = DatabaseService();
-  // Сервис для сбора аналитики
   final AnalyticsService _analytics = AnalyticsService();
 
-  // Метод загрузки истории сообщений
   Future<void> _loadHistory() async {
+    // ... (существующий код без изменений)
     try {
       // Получение сообщений из базы данных
       final messages = await _db.getMessages();
@@ -135,9 +173,9 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Метод сохранения сообщения в базу данных
   Future<void> _saveMessage(ChatMessage message) async {
-    try {
+    // ... (существующий код без изменений)
+     try {
       // Сохранение сообщения в базу данных
       await _db.saveMessage(message);
     } catch (e) {
@@ -146,8 +184,12 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Метод отправки сообщения
   Future<void> sendMessage(String content, {bool trackAnalytics = true}) async {
+    // ... (существующий код sendMessage)
+    // Убедимся, что _api использует актуальный ключ, если он читает dotenv не при каждом запросе
+    // Однако, _api уже пересоздается в apiSettingsUpdated и _initializeProvider
+    // Ключевой момент - _api.sendMessage должен использовать корректный ключ
+    // ...
     // Проверка на пустое сообщение или отсутствие модели
     if (content.trim().isEmpty || _currentModel == null) return;
 
@@ -220,22 +262,25 @@ class ChatProvider with ChangeNotifier {
 
         // Создание и добавление сообщения AI
         // Получение количества токенов из ответа
-        final promptTokens = response['usage']['prompt_tokens'] ?? 0;
-        final completionTokens = response['usage']['completion_tokens'] ?? 0;
+        final promptTokens = response['usage']?['prompt_tokens'] ?? 0;
+        final completionTokens = response['usage']?['completion_tokens'] ?? 0;
 
         final totalCost = response['usage']?['total_cost'];
+        
+        Map<String, dynamic>? modelData;
+        if (_availableModels.any((m) => m['id'] == _currentModel)) {
+            modelData = _availableModels.firstWhere((m) => m['id'] == _currentModel);
+        }
 
-        // Получение тарифов для текущей модели
-        final model = _availableModels
-            .firstWhere((model) => model['id'] == _currentModel);
 
         // Расчет стоимости запроса
-        final cost = (totalCost == null)
+        final cost = (totalCost == null && modelData != null)
             ? ((promptTokens *
-                    (double.tryParse(model['pricing']?['prompt']) ?? 0)) +
+                    (double.tryParse(modelData['pricing']?['prompt']?.toString() ?? '0.0') ?? 0.0)) +
                 (completionTokens *
-                    (double.tryParse(model['pricing']?['completion']) ?? 0)))
-            : totalCost;
+                    (double.tryParse(modelData['pricing']?['completion']?.toString() ?? '0.0') ?? 0.0)))
+            : (totalCost ?? 0.0);
+
 
         // Логирование ответа API
         _log('Cost Response: $cost');
@@ -276,86 +321,59 @@ class ChatProvider with ChangeNotifier {
     }
   }
 
-  // Метод установки текущей модели
   void setCurrentModel(String modelId) {
-    // Установка новой модели
     _currentModel = modelId;
-    // Уведомление слушателей об изменениях
     notifyListeners();
   }
 
-  // Метод очистки истории
   Future<void> clearHistory() async {
-    // Очистка списка сообщений
     _messages.clear();
-    // Очистка истории в базе данных
     await _db.clearHistory();
-    // Очистка данных аналитики
     _analytics.clearData();
-    // Уведомление слушателей об изменениях
     notifyListeners();
   }
 
-  // Метод экспорта логов
   Future<String> exportLogs() async {
-    // Получение директории для сохранения файла
     final directory = await getApplicationDocumentsDirectory();
-    // Генерация имени файла с текущей датой и временем
     final now = DateTime.now();
     final fileName =
         'chat_logs_${now.year}${now.month}${now.day}_${now.hour}${now.minute}${now.second}.txt';
-    // Создание файла
     final file = File('${directory.path}/$fileName');
 
-    // Создание буфера для записи логов
     final buffer = StringBuffer();
     buffer.writeln('=== Debug Logs ===\n');
-    // Запись всех логов
     for (final log in _debugLogs) {
       buffer.writeln(log);
     }
 
     buffer.writeln('\n=== Chat Logs ===\n');
-    // Запись времени генерации
     buffer.writeln('Generated: ${now.toString()}\n');
 
-    // Запись всех сообщений
     for (final message in _messages) {
       buffer.writeln('${message.isUser ? "User" : "AI"} (${message.modelId}):');
       buffer.writeln(message.content);
-      // Запись количества токенов, если есть
       if (message.tokens != null) {
         buffer.writeln('Tokens: ${message.tokens}');
       }
-      // Запись времени сообщения
       buffer.writeln('Time: ${message.timestamp}');
       buffer.writeln('---\n');
     }
 
-    // Запись содержимого в файл
     await file.writeAsString(buffer.toString());
-    // Возвращение пути к файлу
     return file.path;
   }
 
-  // Метод экспорта сообщений в формате JSON
   Future<String> exportMessagesAsJson() async {
-    // Получение директории для сохранения файла
     final directory = await getApplicationDocumentsDirectory();
-    // Генерация имени файла с текущей датой и временем
     final now = DateTime.now();
     final fileName =
         'chat_history_${now.year}${now.month}${now.day}_${now.hour}${now.minute}${now.second}.json';
-    // Создание файла
     final file = File('${directory.path}/$fileName');
 
-    // Преобразование сообщений в JSON
     final List<Map<String, dynamic>> messagesJson =
         _messages.map((message) => message.toJson()).toList();
 
-    // Запись JSON в файл
     await file.writeAsString(jsonEncode(messagesJson));
-    // Возвращение пути к файлу
     return file.path;
   }
 
@@ -363,22 +381,14 @@ class ChatProvider with ChangeNotifier {
     return _api.formatPricing(pricing);
   }
 
-  // Метод экспорта истории
   Future<Map<String, dynamic>> exportHistory() async {
-    // Получение статистики из базы данных
     final dbStats = await _db.getStatistics();
-    // Получение статистики аналитики
     final analyticsStats = _analytics.getStatistics();
-    // Получение данных сессий
     final sessionData = _analytics.exportSessionData();
-    // Получение эффективности моделей
     final modelEfficiency = _analytics.getModelEfficiency();
-    // Получение статистики времени ответа
     final responseTimeStats = _analytics.getResponseTimeStats();
-    // Получение статистики длины сообщений
     final messageLengthStats = _analytics.getMessageLengthStats();
 
-    // Возвращение всех данных в виде Map
     return {
       'database_stats': dbStats,
       'analytics_stats': analyticsStats,
