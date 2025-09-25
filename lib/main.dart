@@ -146,7 +146,7 @@ class MyApp extends StatelessWidget {
         // Настройка поведения прокрутки
         builder: (context, child) {
           return ScrollConfiguration(
-            behavior: ScrollBehavior(),
+            behavior: ScrollBehavior().copyWith(overscroll: false),
             child: child!,
           );
         },
@@ -185,7 +185,7 @@ class MyApp extends StatelessWidget {
             foregroundColor: Colors.white, // Цвет текста
           ),
           // Настройка темы диалогов
-          dialogTheme: const DialogTheme(
+          dialogTheme: const DialogThemeData(
             backgroundColor: Color(0xFF333333), // Цвет фона
             titleTextStyle: TextStyle(
               color: Colors.white, // Цвет заголовка
