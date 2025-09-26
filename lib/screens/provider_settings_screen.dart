@@ -107,7 +107,7 @@ class _ProviderSettingsScreenState extends State<ProviderSettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Настройки Провайдера и PIN'),
+        title: const Text('Настройки'),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())

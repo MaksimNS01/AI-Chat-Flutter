@@ -541,7 +541,7 @@ class _ChatScreenState extends State<ChatScreen> {
         const PopupMenuItem<String>( // <<<--- НОВЫЙ ПУНКТ МЕНЮ
           value: 'provider_settings',
           height: 40, // или какая у вас стандартная высота
-          child: Text('Настройки API и PIN', style: TextStyle(color: Colors.white, fontSize: 12)),
+          child: Text('Настройки', style: TextStyle(color: Colors.white, fontSize: 12)),
         ),
       ],
     );
