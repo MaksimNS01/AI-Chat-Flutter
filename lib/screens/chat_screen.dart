@@ -10,6 +10,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../providers/chat_provider.dart';
 // Импорт модели сообщения
 import '../models/message.dart';
+// Импорт настроек
+// import './settings_screen.dart'; // Если этот импорт больше не нужен напрямую
+import './provider_settings_screen.dart'; // <<<--- Убедитесь, что этот импорт есть
 
 // Виджет для обработки ошибок в UI
 class ErrorBoundary extends StatelessWidget {
@@ -143,7 +146,8 @@ class _MessageBubble extends StatelessWidget {
                     },
                     tooltip: 'Копировать текст',
                   ),
-                  const Spacer() // Ensures button stays to the left under AI message
+                  if (!message.isUser) // Only add spacer for AI messages to keep copy button left
+                    const Spacer() 
                 ],
               ),
             ),
@@ -249,9 +253,11 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _scrollController.addListener(_scrollListener);
 
-    // Прокрутка вниз после загрузки истории
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _jumpToBottom();
+      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+      if (chatProvider.messages.isNotEmpty) {
+        _handleMessagesUpdated(); 
+      }
     });
   }
 
@@ -284,18 +290,34 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _jumpToBottom() {
-    if (_scrollController.hasClients) {
+    if (_scrollController.hasClients &&
+        _scrollController.position.hasContentDimensions && 
+        _scrollController.position.maxScrollExtent > 0.0) { 
       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
     }
   }
 
   void _scrollToBottom() {
-    if (_scrollController.hasClients) {
+    if (_scrollController.hasClients &&
+        _scrollController.position.hasContentDimensions && 
+        _scrollController.position.maxScrollExtent > 0.0) { 
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
+    }
+  }
+
+  void _handleMessagesUpdated() {
+    if (mounted && _scrollController.hasClients) {
+       WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients && 
+              _scrollController.position.hasContentDimensions && 
+              _scrollController.position.maxScrollExtent > 0.0) { 
+            _scrollToBottom();
+          }
+      });
     }
   }
 
@@ -460,11 +482,11 @@ class _ChatScreenState extends State<ChatScreen> {
       icon: const Icon(Icons.more_vert, color: Colors.white, size: 16),
       color: const Color(0xFF333333),
       onSelected: (String choice) async {
-        final chatProvider = context.read<ChatProvider>();
+        // final chatProvider = context.read<ChatProvider>(); // chatProvider не используется здесь напрямую, но может понадобиться
         switch (choice) {
           case 'export':
-            final path = await chatProvider.exportMessagesAsJson();
-            if (context.mounted) {
+            final path = await context.read<ChatProvider>().exportMessagesAsJson(); // Используем context.read
+            if (mounted) { // mounted используется здесь, поэтому context нужен
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('История сохранена в: $path',
@@ -475,8 +497,8 @@ class _ChatScreenState extends State<ChatScreen> {
             }
             break;
           case 'logs':
-            final path = await chatProvider.exportLogs();
-            if (context.mounted) {
+            final path = await context.read<ChatProvider>().exportLogs(); // Используем context.read
+            if (mounted) { // mounted используется здесь, поэтому context нужен
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Логи сохранены в: $path',
@@ -488,6 +510,12 @@ class _ChatScreenState extends State<ChatScreen> {
             break;
           case 'clear':
             _showClearHistoryDialog(context);
+            break;
+          case 'provider_settings': // <<<--- НОВЫЙ CASE
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const ProviderSettingsScreen()),
+            );
             break;
         }
       },
@@ -510,6 +538,11 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Text('Очистить историю',
               style: TextStyle(color: Colors.white, fontSize: 12)),
         ),
+        const PopupMenuItem<String>( // <<<--- НОВЫЙ ПУНКТ МЕНЮ
+          value: 'provider_settings',
+          height: 40, // или какая у вас стандартная высота
+          child: Text('Настройки API и PIN', style: TextStyle(color: Colors.white, fontSize: 12)),
+        ),
       ],
     );
   }
@@ -517,13 +550,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildMessagesList(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, chatProvider, child) {
-        // Прокрутка вниз при добавлении новых сообщений
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_previousMessagesLength != chatProvider.messages.length) {
-            _previousMessagesLength = chatProvider.messages.length;
-            _scrollToBottom();
-          }
-        });
+        if (_previousMessagesLength != chatProvider.messages.length) {
+            _handleMessagesUpdated(); // Вызываем единый обработчик
+          _previousMessagesLength = chatProvider.messages.length;
+        }
 
         if (chatProvider.messages.isEmpty) {
           return const Center(
@@ -578,7 +608,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: () async {
               final path =
               await context.read<ChatProvider>().exportMessagesAsJson();
-              if (context.mounted) {
+              if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('История сохранена в: $path',
@@ -631,10 +661,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _showAnalyticsDialog(BuildContext context) {
-    final chatProvider = context.read<ChatProvider>();
+    final chatProvider = context.read<ChatProvider>(); // Используем локальную переменную, а не context.read если не меняем состояние
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) { // Переименовываем context во избежание конфликта
         return AlertDialog(
           backgroundColor: const Color(0xFF333333),
           title: const Text(
@@ -664,80 +694,65 @@ class _ChatScreenState extends State<ChatScreen> {
                       fontSize: 12),
                 ),
                 const SizedBox(height: 8),
-                ...chatProvider.messages
-                    .fold<Map<String, Map<String, dynamic>>>(
-                  {},
-                      (map, msg) {
-                    if (msg.modelId != null) {
-                      if (!map.containsKey(msg.modelId)) {
-                        map[msg.modelId!] = {
-                          'count': 0,
-                          'tokens': 0,
-                          'cost': 0.0,
-                        };
-                      }
-                      map[msg.modelId]!['count'] =
-                          map[msg.modelId]!['count']! + 1;
-                      if (msg.tokens != null) {
-                        map[msg.modelId]!['tokens'] =
-                            map[msg.modelId]!['tokens']! + msg.tokens!;
-                      }
-                      if (msg.cost != null) {
-                        map[msg.modelId]!['cost'] =
-                            map[msg.modelId]!['cost']! + msg.cost!;
-                      }
+                // Для отображения статистики из AnalyticsService, используем FutureBuilder
+                FutureBuilder<Map<String, Map<String, int>>>(
+                  future: chatProvider.modelTokenUsageStats, // Получаем Future
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
                     }
-                    return map;
+                    if (snapshot.hasError) {
+                      return Text('Ошибка: ${snapshot.error}', style: const TextStyle(color: Colors.red, fontSize: 12));
+                    }
+                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                      return const Text('Нет данных по моделям.', style: TextStyle(color: Colors.white70, fontSize: 12));
+                    }
+                    final modelUsage = snapshot.data!;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: modelUsage.entries.map((entry) {
+                        final modelId = entry.key;
+                        final stats = entry.value;
+                        final count = stats['count'] ?? 0;
+                        final tokens = stats['tokens'] ?? 0;
+                        // Стоимость здесь не трекается отдельно в modelTokenUsageStats, она в общем балансе
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 12, bottom: 6),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                modelId,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Сообщений: $count',
+                                style: const TextStyle(
+                                    color: Colors.white70, fontSize: 12),
+                              ),
+                              if (tokens > 0) ...[
+                                Text(
+                                  'Токенов: $tokens',
+                                  style: const TextStyle(
+                                      color: Colors.white70, fontSize: 12),
+                                ),
+                              ],
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    );
                   },
-                )
-                    .entries
-                    .map((entry) => Padding(
-                  padding: const EdgeInsets.only(left: 12, bottom: 6),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        entry.key,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        'Сообщений: ${entry.value['count']}',
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 12),
-                      ),
-                      if (entry.value['tokens'] > 0) ...[
-                        Text(
-                          'Токенов: ${entry.value['tokens']}',
-                          style: const TextStyle(
-                              color: Colors.white70, fontSize: 12),
-                        ),
-                        Consumer<ChatProvider>(
-                          builder: (context, provider, child) {
-                            final isVsetgpt = provider.baseUrl
-                                ?.contains('vsetgpt.ru') ==
-                                true;
-                            return Text(
-                              isVsetgpt
-                                  ? 'Стоимость: ${entry.value['cost'] < 1e-8 ? '0.0' : entry.value['cost'].toStringAsFixed(8)}₽'
-                                  : 'Стоимость: \$${entry.value['cost'] < 1e-8 ? '0.0' : entry.value['cost'].toStringAsFixed(8)}',
-                              style: const TextStyle(
-                                  color: Colors.white70, fontSize: 12),
-                            );
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
-                )),
+                ),
               ],
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(), // Используем dialogContext
               child: const Text('Закрыть', style: TextStyle(fontSize: 12)),
             ),
           ],
@@ -749,7 +764,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showClearHistoryDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (BuildContext dialogContext) {
+      builder: (BuildContext dialogContext) { // Переименовываем context
         return AlertDialog(
           backgroundColor: const Color(0xFF333333),
           title: const Text(
@@ -762,13 +777,13 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(), // Используем dialogContext
               child: const Text('Отмена', style: TextStyle(fontSize: 12)),
             ),
             TextButton(
               onPressed: () {
                 context.read<ChatProvider>().clearHistory();
-                Navigator.of(dialogContext).pop();
+                Navigator.of(dialogContext).pop(); // Используем dialogContext
               },
               child: const Text(
                 'Очистить',
