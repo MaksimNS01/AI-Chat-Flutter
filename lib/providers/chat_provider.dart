@@ -56,11 +56,14 @@ class ChatProvider with ChangeNotifier {
     return stats;
   }
 
-  // Новый геттер для получения данных для графика расходов
+  // Старый геттер, можно оставить для обратной совместимости или удалить, если не используется
   Future<List<Map<String, dynamic>>> get dailyUsageStats async {
-    // Можно передать параметр daysLimit, если нужно сделать его настраиваемым
-    // например, _db.getDailyUsageStats(daysLimit: 30)
-    return await _db.getDailyUsageStats();
+    return await _db.getDailyUsageStats(); // по умолчанию 30 дней
+  }
+
+  // Новый метод для получения данных для графика расходов с указанием лимита дней
+  Future<List<Map<String, dynamic>>> getDailyUsageStatsWithLimit(int daysLimit) async {
+    return await _db.getDailyUsageStats(daysLimit: daysLimit);
   }
 
   ChatProvider() {
