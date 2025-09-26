@@ -58,7 +58,7 @@ class _MessageBubble extends StatelessWidget {
       alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Column(
         crossAxisAlignment:
-            message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
@@ -107,11 +107,11 @@ class _MessageBubble extends StatelessWidget {
                         return Text(
                           message.cost! < 0.001
                               ? isVsetgpt
-                                  ? 'Стоимость: <0.001₽'
-                                  : 'Стоимость: <\$0.001'
+                              ? 'Стоимость: <0.001₽'
+                              : 'Стоимость: <\$0.001'
                               : isVsetgpt
-                                  ? 'Стоимость: ${message.cost!.toStringAsFixed(3)}₽'
-                                  : 'Стоимость: \$${message.cost!.toStringAsFixed(3)}',
+                              ? 'Стоимость: ${message.cost!.toStringAsFixed(3)}₽'
+                              : 'Стоимость: \$${message.cost!.toStringAsFixed(3)}',
                           style: const TextStyle(
                             color: Colors.white54,
                             fontSize: 11,
@@ -222,7 +222,7 @@ class _MessageInputState extends State<_MessageInput> {
             icon: const Icon(Icons.send, size: 20),
             color: _isComposing ? Colors.blue : Colors.grey,
             onPressed:
-                _isComposing ? () => _handleSubmitted(_controller.text) : null,
+            _isComposing ? () => _handleSubmitted(_controller.text) : null,
             padding: const EdgeInsets.all(8),
           ),
         ],
@@ -249,13 +249,9 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _scrollController.addListener(_scrollListener);
 
-    // Initial scroll to bottom after messages are loaded for the first time
+    // Прокрутка вниз после загрузки истории
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-      _previousMessagesLength = chatProvider.messages.length;
-      if (chatProvider.messages.isNotEmpty && _scrollController.hasClients) {
-        _jumpToBottom();
-      }
+      _jumpToBottom();
     });
   }
 
@@ -268,19 +264,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _scrollListener() {
     if (_scrollController.hasClients) {
-      // Show button if scrolled up more than a certain threshold (e.g., half a screen viewport)
-      // and not already at the bottom edge.
-      bool isScrolledUp = _scrollController.position.pixels < 
-                          _scrollController.position.maxScrollExtent - MediaQuery.of(context).size.height * 0.1; // 10% of viewport
-      
+      bool isScrolledUp = _scrollController.position.pixels <
+          _scrollController.position.maxScrollExtent - MediaQuery.of(context).size.height * 0.1;
+
       if (isScrolledUp && !_scrollController.position.atEdge && _scrollController.position.extentAfter < _scrollController.position.maxScrollExtent) {
-         if (!_showScrollToBottomButton) {
+        if (!_showScrollToBottomButton) {
           setState(() {
             _showScrollToBottomButton = true;
           });
         }
       } else {
-         // Hide if at the bottom or very close to it
         if (_showScrollToBottomButton) {
           setState(() {
             _showScrollToBottomButton = false;
@@ -289,7 +282,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
   }
-  
+
   void _jumpToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
@@ -306,17 +299,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Called when message list length changes
-  void _handleMessagesUpdated() {
-    if (mounted && _scrollController.hasClients) {
-       WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollToBottom();
-          }
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return ErrorBoundary(
@@ -327,7 +309,7 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             children: [
               Expanded(
-                child: Stack( // Use Stack to overlay the scroll-to-bottom button
+                child: Stack(
                   children: [
                     _buildMessagesList(context),
                     if (_showScrollToBottomButton)
@@ -425,7 +407,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                             Text(
                               chatProvider.formatPricing(double.tryParse(
-                                      model['pricing']!['completion'].toString()) ?? 0.0),
+                                  model['pricing']!['completion'].toString()) ?? 0.0),
                               style: const TextStyle(fontSize: 9, color: Colors.white54),
                             ),
                             const SizedBox(width: 6),
@@ -535,14 +517,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildMessagesList(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, chatProvider, child) {
-        // Auto-scroll when messages list changes
-        if (_previousMessagesLength != chatProvider.messages.length) {
-           // Only schedule scroll if new messages were added to the end
-          if (chatProvider.messages.length > _previousMessagesLength) {
-             _handleMessagesUpdated();
+        // Прокрутка вниз при добавлении новых сообщений
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_previousMessagesLength != chatProvider.messages.length) {
+            _previousMessagesLength = chatProvider.messages.length;
+            _scrollToBottom();
           }
-          _previousMessagesLength = chatProvider.messages.length;
-        }
+        });
 
         if (chatProvider.messages.isEmpty) {
           return const Center(
@@ -552,11 +533,10 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           );
         }
-        
+
         return ListView.builder(
-          controller: _scrollController, // Assign controller
+          controller: _scrollController,
           padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-          // reverse: false, // Default, keep it for clarity
           itemCount: chatProvider.messages.length,
           itemBuilder: (context, index) {
             final message = chatProvider.messages[index];
@@ -574,10 +554,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildInputArea(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 4.0),
-      color: const Color(0xFF262626), // Match AppBar color
+      color: const Color(0xFF262626),
       child: _MessageInput(
         onSubmitted: (String text) {
-           context.read<ChatProvider>().sendMessage(text);
+          context.read<ChatProvider>().sendMessage(text);
         },
       ),
     );
@@ -597,7 +577,7 @@ class _ChatScreenState extends State<ChatScreen> {
             color: const Color(0xFF1A73E8),
             onPressed: () async {
               final path =
-                  await context.read<ChatProvider>().exportMessagesAsJson();
+              await context.read<ChatProvider>().exportMessagesAsJson();
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -686,72 +666,72 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(height: 8),
                 ...chatProvider.messages
                     .fold<Map<String, Map<String, dynamic>>>(
-                      {},
+                  {},
                       (map, msg) {
-                        if (msg.modelId != null) {
-                          if (!map.containsKey(msg.modelId)) {
-                            map[msg.modelId!] = {
-                              'count': 0,
-                              'tokens': 0,
-                              'cost': 0.0,
-                            };
-                          }
-                          map[msg.modelId]!['count'] =
-                              map[msg.modelId]!['count']! + 1;
-                          if (msg.tokens != null) {
-                            map[msg.modelId]!['tokens'] =
-                                map[msg.modelId]!['tokens']! + msg.tokens!;
-                          }
-                          if (msg.cost != null) {
-                            map[msg.modelId]!['cost'] =
-                                map[msg.modelId]!['cost']! + msg.cost!;
-                          }
-                        }
-                        return map;
-                      },
-                    )
+                    if (msg.modelId != null) {
+                      if (!map.containsKey(msg.modelId)) {
+                        map[msg.modelId!] = {
+                          'count': 0,
+                          'tokens': 0,
+                          'cost': 0.0,
+                        };
+                      }
+                      map[msg.modelId]!['count'] =
+                          map[msg.modelId]!['count']! + 1;
+                      if (msg.tokens != null) {
+                        map[msg.modelId]!['tokens'] =
+                            map[msg.modelId]!['tokens']! + msg.tokens!;
+                      }
+                      if (msg.cost != null) {
+                        map[msg.modelId]!['cost'] =
+                            map[msg.modelId]!['cost']! + msg.cost!;
+                      }
+                    }
+                    return map;
+                  },
+                )
                     .entries
                     .map((entry) => Padding(
-                          padding: const EdgeInsets.only(left: 12, bottom: 6),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                entry.key,
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                'Сообщений: ${entry.value['count']}',
-                                style: const TextStyle(
-                                    color: Colors.white70, fontSize: 12),
-                              ),
-                              if (entry.value['tokens'] > 0) ...[
-                                Text(
-                                  'Токенов: ${entry.value['tokens']}',
-                                  style: const TextStyle(
-                                      color: Colors.white70, fontSize: 12),
-                                ),
-                                Consumer<ChatProvider>( // Added Consumer here as well
-                                  builder: (context, chatProvider, child) {
-                                    final isVsetgpt = chatProvider.baseUrl
-                                            ?.contains('vsetgpt.ru') ==
-                                        true;
-                                    return Text(
-                                      isVsetgpt
-                                          ? 'Стоимость: ${entry.value['cost'] < 1e-8 ? '0.0' : entry.value['cost'].toStringAsFixed(8)}₽'
-                                          : 'Стоимость: \$${entry.value['cost'] < 1e-8 ? '0.0' : entry.value['cost'].toStringAsFixed(8)}',
-                                      style: const TextStyle(
-                                          color: Colors.white70, fontSize: 12),
-                                    );
-                                  },
-                                ),
-                              ],
-                            ],
-                          ),
-                        )),
+                  padding: const EdgeInsets.only(left: 12, bottom: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        entry.key,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'Сообщений: ${entry.value['count']}',
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12),
+                      ),
+                      if (entry.value['tokens'] > 0) ...[
+                        Text(
+                          'Токенов: ${entry.value['tokens']}',
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 12),
+                        ),
+                        Consumer<ChatProvider>(
+                          builder: (context, provider, child) {
+                            final isVsetgpt = provider.baseUrl
+                                ?.contains('vsetgpt.ru') ==
+                                true;
+                            return Text(
+                              isVsetgpt
+                                  ? 'Стоимость: ${entry.value['cost'] < 1e-8 ? '0.0' : entry.value['cost'].toStringAsFixed(8)}₽'
+                                  : 'Стоимость: \$${entry.value['cost'] < 1e-8 ? '0.0' : entry.value['cost'].toStringAsFixed(8)}',
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 12),
+                            );
+                          },
+                        ),
+                      ],
+                    ],
+                  ),
+                )),
               ],
             ),
           ),
@@ -769,7 +749,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showClearHistoryDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           backgroundColor: const Color(0xFF333333),
           title: const Text(
@@ -782,16 +762,13 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('Отмена', style: TextStyle(fontSize: 12)),
             ),
             TextButton(
               onPressed: () {
                 context.read<ChatProvider>().clearHistory();
-                // After clearing history, the list will be empty.
-                // _previousMessagesLength will be updated by the Consumer.
-                // No explicit scroll needed as the list is empty or very short.
-                Navigator.of(context).pop();
+                Navigator.of(dialogContext).pop();
               },
               child: const Text(
                 'Очистить',
