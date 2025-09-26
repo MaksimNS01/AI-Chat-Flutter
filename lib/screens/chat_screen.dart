@@ -130,7 +130,7 @@ class _MessageBubble extends StatelessWidget {
                     onPressed: () {
                       final textToCopy = message.isUser
                           ? message.cleanContent
-                          : '${messages[index - 1].cleanContent}\n\n${message.cleanContent}';
+                          : (index > 0 ? '${messages[index - 1].cleanContent}\n\n${message.cleanContent}' : message.cleanContent);
                       Clipboard.setData(ClipboardData(text: textToCopy));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -143,7 +143,7 @@ class _MessageBubble extends StatelessWidget {
                     },
                     tooltip: 'Копировать текст',
                   ),
-                  const Spacer()
+                  const Spacer() // Ensures button stays to the left under AI message
                 ],
               ),
             ),
@@ -165,9 +165,7 @@ class _MessageInput extends StatefulWidget {
 
 // Состояние виджета ввода сообщений
 class _MessageInputState extends State<_MessageInput> {
-  // Контроллер для управления текстовым полем
   final _controller = TextEditingController();
-  // Флаг, указывающий, вводится ли сейчас сообщение
   bool _isComposing = false;
 
   @override
@@ -177,11 +175,13 @@ class _MessageInputState extends State<_MessageInput> {
   }
 
   void _handleSubmitted(String text) {
+    if (text.trim().isEmpty) return;
+    final String textToSubmit = text.trim();
     _controller.clear();
     setState(() {
       _isComposing = false;
     });
-    widget.onSubmitted(text);
+    widget.onSubmitted(textToSubmit);
   }
 
   @override
@@ -213,6 +213,9 @@ class _MessageInputState extends State<_MessageInput> {
                 ),
               ),
               style: const TextStyle(color: Colors.white, fontSize: 13),
+              textInputAction: TextInputAction.send,
+              minLines: 1,
+              maxLines: 5,
             ),
           ),
           IconButton(
@@ -228,9 +231,91 @@ class _MessageInputState extends State<_MessageInput> {
   }
 }
 
-// Основной экран чата
-class ChatScreen extends StatelessWidget {
+// Основной экран чата (теперь StatefulWidget)
+class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final ScrollController _scrollController = ScrollController();
+  bool _showScrollToBottomButton = false;
+  int _previousMessagesLength = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_scrollListener);
+
+    // Initial scroll to bottom after messages are loaded for the first time
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+      _previousMessagesLength = chatProvider.messages.length;
+      if (chatProvider.messages.isNotEmpty && _scrollController.hasClients) {
+        _jumpToBottom();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_scrollListener);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollListener() {
+    if (_scrollController.hasClients) {
+      // Show button if scrolled up more than a certain threshold (e.g., half a screen viewport)
+      // and not already at the bottom edge.
+      bool isScrolledUp = _scrollController.position.pixels < 
+                          _scrollController.position.maxScrollExtent - MediaQuery.of(context).size.height * 0.1; // 10% of viewport
+      
+      if (isScrolledUp && !_scrollController.position.atEdge && _scrollController.position.extentAfter < _scrollController.position.maxScrollExtent) {
+         if (!_showScrollToBottomButton) {
+          setState(() {
+            _showScrollToBottomButton = true;
+          });
+        }
+      } else {
+         // Hide if at the bottom or very close to it
+        if (_showScrollToBottomButton) {
+          setState(() {
+            _showScrollToBottomButton = false;
+          });
+        }
+      }
+    }
+  }
+  
+  void _jumpToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    }
+  }
+
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  // Called when message list length changes
+  void _handleMessagesUpdated() {
+    if (mounted && _scrollController.hasClients) {
+       WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollToBottom();
+          }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -242,7 +327,21 @@ class ChatScreen extends StatelessWidget {
           child: Column(
             children: [
               Expanded(
-                child: _buildMessagesList(),
+                child: Stack( // Use Stack to overlay the scroll-to-bottom button
+                  children: [
+                    _buildMessagesList(context),
+                    if (_showScrollToBottomButton)
+                      Positioned(
+                        bottom: 16.0,
+                        right: 16.0,
+                        child: FloatingActionButton.small(
+                          onPressed: _scrollToBottom,
+                          backgroundColor: Colors.blueAccent.withOpacity(0.8),
+                          child: const Icon(Icons.arrow_downward, color: Colors.white),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               _buildInputArea(context),
               _buildActionButtons(context),
@@ -253,7 +352,6 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Построение верхней панели приложения
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     return AppBar(
       backgroundColor: const Color(0xFF262626),
@@ -269,7 +367,6 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Построение выпадающего списка для выбора модели
   Widget _buildModelSelector(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, chatProvider, child) {
@@ -300,47 +397,49 @@ class ChatScreen extends StatelessWidget {
                 value: model['id'],
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
                       model['name'] ?? '',
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12),
                     ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Tooltip(
-                          message: 'Входные токены',
-                          child: const Icon(Icons.arrow_upward, size: 12),
+                    if(model['pricing'] != null && model['pricing']['prompt'] != null && model['pricing']['completion'] != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2.0),
+                        child: Row(
+                          children: [
+                            Tooltip(
+                              message: 'Входные токены',
+                              child: const Icon(Icons.arrow_upward, size: 10, color: Colors.white54),
+                            ),
+                            Text(
+                              chatProvider.formatPricing(
+                                  double.tryParse(model['pricing']!['prompt'].toString()) ?? 0.0),
+                              style: const TextStyle(fontSize: 9, color: Colors.white54),
+                            ),
+                            const SizedBox(width: 6),
+                            Tooltip(
+                              message: 'Генерация',
+                              child: const Icon(Icons.arrow_downward, size: 10, color: Colors.white54),
+                            ),
+                            Text(
+                              chatProvider.formatPricing(double.tryParse(
+                                      model['pricing']!['completion'].toString()) ?? 0.0),
+                              style: const TextStyle(fontSize: 9, color: Colors.white54),
+                            ),
+                            const SizedBox(width: 6),
+                            Tooltip(
+                              message: 'Контекст',
+                              child: const Icon(Icons.memory, size: 10, color: Colors.white54),
+                            ),
+                            Text(
+                              ' ${model['context_length'] ?? '0'}',
+                              style: const TextStyle(fontSize: 9, color: Colors.white54),
+                            ),
+                          ],
                         ),
-                        Text(
-                          chatProvider.formatPricing(
-                              double.tryParse(model['pricing']?['prompt']) ??
-                                  0.0),
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                        const SizedBox(width: 8),
-                        Tooltip(
-                          message: 'Генерация',
-                          child: const Icon(Icons.arrow_downward, size: 12),
-                        ),
-                        Text(
-                          chatProvider.formatPricing(double.tryParse(
-                                  model['pricing']?['completion']) ??
-                              0.0),
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                        const SizedBox(width: 8),
-                        Tooltip(
-                          message: 'Контекст',
-                          child: const Icon(Icons.memory, size: 12),
-                        ),
-                        Text(
-                          ' ${model['context_length'] ?? '0'}',
-                          style: const TextStyle(fontSize: 10),
-                        ),
-                      ],
-                    ),
+                      ),
                   ],
                 ),
               );
@@ -351,7 +450,6 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Отображение текущего баланса пользователя
   Widget _buildBalanceDisplay(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, chatProvider, child) {
@@ -359,7 +457,7 @@ class ChatScreen extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 3.0),
           child: Row(
             children: [
-              Icon(Icons.credit_card, size: 12, color: Colors.white70),
+              const Icon(Icons.credit_card, size: 12, color: Colors.white70),
               const SizedBox(width: 4),
               Text(
                 chatProvider.balance,
@@ -375,7 +473,6 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Построение кнопки меню с дополнительными опциями
   Widget _buildMenuButton(BuildContext context) {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, color: Colors.white, size: 16),
@@ -435,13 +532,31 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Построение списка сообщений чата
-  Widget _buildMessagesList() {
+  Widget _buildMessagesList(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, chatProvider, child) {
+        // Auto-scroll when messages list changes
+        if (_previousMessagesLength != chatProvider.messages.length) {
+           // Only schedule scroll if new messages were added to the end
+          if (chatProvider.messages.length > _previousMessagesLength) {
+             _handleMessagesUpdated();
+          }
+          _previousMessagesLength = chatProvider.messages.length;
+        }
+
+        if (chatProvider.messages.isEmpty) {
+          return const Center(
+            child: Text(
+              'Нет сообщений. Начните диалог!',
+              style: TextStyle(color: Colors.white54, fontSize: 14),
+            ),
+          );
+        }
+        
         return ListView.builder(
+          controller: _scrollController, // Assign controller
           padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-          reverse: false,
+          // reverse: false, // Default, keep it for clarity
           itemCount: chatProvider.messages.length,
           itemBuilder: (context, index) {
             final message = chatProvider.messages[index];
@@ -456,28 +571,18 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Построение области ввода сообщений
   Widget _buildInputArea(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 4.0),
-      color: const Color(0xFF262626),
-      child: Row(
-        children: [
-          Expanded(
-            child: _MessageInput(
-              onSubmitted: (String text) {
-                if (text.trim().isNotEmpty) {
-                  context.read<ChatProvider>().sendMessage(text);
-                }
-              },
-            ),
-          ),
-        ],
+      color: const Color(0xFF262626), // Match AppBar color
+      child: _MessageInput(
+        onSubmitted: (String text) {
+           context.read<ChatProvider>().sendMessage(text);
+        },
       ),
     );
   }
 
-  // Построение панели с кнопками действий
   Widget _buildActionButtons(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 4.0),
@@ -523,7 +628,6 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Создание отдельной кнопки действия с заданными параметрами
   Widget _buildActionButton({
     required BuildContext context,
     required IconData icon,
@@ -546,7 +650,6 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Отображение диалога с аналитикой использования чата
   void _showAnalyticsDialog(BuildContext context) {
     final chatProvider = context.read<ChatProvider>();
     showDialog(
@@ -631,7 +734,7 @@ class ChatScreen extends StatelessWidget {
                                   style: const TextStyle(
                                       color: Colors.white70, fontSize: 12),
                                 ),
-                                Consumer<ChatProvider>(
+                                Consumer<ChatProvider>( // Added Consumer here as well
                                   builder: (context, chatProvider, child) {
                                     final isVsetgpt = chatProvider.baseUrl
                                             ?.contains('vsetgpt.ru') ==
@@ -663,7 +766,6 @@ class ChatScreen extends StatelessWidget {
     );
   }
 
-  // Отображение диалога подтверждения очистки истории
   void _showClearHistoryDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -686,6 +788,9 @@ class ChatScreen extends StatelessWidget {
             TextButton(
               onPressed: () {
                 context.read<ChatProvider>().clearHistory();
+                // After clearing history, the list will be empty.
+                // _previousMessagesLength will be updated by the Consumer.
+                // No explicit scroll needed as the list is empty or very short.
                 Navigator.of(context).pop();
               },
               child: const Text(
