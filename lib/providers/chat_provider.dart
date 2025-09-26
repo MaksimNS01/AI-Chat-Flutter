@@ -18,12 +18,12 @@ import '../api/openrouter_client.dart';
 import '../services/database_service.dart';
 // Импорт сервиса для аналитики
 import '../services/analytics_service.dart';
-// Импорт ключей настроек из settings_screen
-import '../screens/settings_screen.dart'; // Для selectedProviderKey, openRouterApiKeyId, etc.
+// Импорт ключей настроек и констант провайдеров из settings_screen.dart
+import '../screens/settings_screen.dart'; 
 
 // Основной класс провайдера для управления состоянием чата
 class ChatProvider with ChangeNotifier {
-  OpenRouterClient _api = OpenRouterClient();
+  late OpenRouterClient _api; // Изменено: используется late для отложенной инициализации
   final List<ChatMessage> _messages = [];
   final List<String> _debugLogs = [];
   List<Map<String, dynamic>> _availableModels = [];
@@ -32,11 +32,10 @@ class ChatProvider with ChangeNotifier {
   bool _isLoading = false;
 
   String _selectedProvider = providerOpenRouter;
-  String _openRouterApiKey = '';
-  String _vseGptApiKey = '';
+  String _apiKey = '';
 
   final DatabaseService _db = DatabaseService();
-  final AnalyticsService _analytics = AnalyticsService(); // Экземпляр AnalyticsService
+  final AnalyticsService _analytics = AnalyticsService();
 
   void _log(String message) {
     _debugLogs.add('${DateTime.now()}: $message');
@@ -48,15 +47,10 @@ class ChatProvider with ChangeNotifier {
   String? get currentModel => _currentModel;
   String get balance => _balance;
   bool get isLoading => _isLoading;
-  String? get baseUrl => _api.baseUrl;
+  String? get baseUrl => _api.baseUrl; // Доступ к _api только после инициализации
 
-  // Геттер для статистики использования токенов моделями
-  // Теперь использует новый метод из AnalyticsService
   Map<String, dynamic> get modelTokenUsageStats {
-    // AnalyticsService.getModelUsageStatistics() должен возвращать Map<String, Map<String, int>>
-    // где ключи внутреннего Map - 'tokens' и 'count'
     final stats = _analytics.getModelUsageStatistics();
-    // print('ChatProvider: modelTokenUsageStats received: $stats'); // Оставляем закомментированным на всякий случай
     return stats; 
   }
 
@@ -67,8 +61,9 @@ class ChatProvider with ChangeNotifier {
   Future<void> _initializeProvider() async {
     try {
       _log('Initializing provider...');
-      await _loadApiSettings();
-      _api = OpenRouterClient();
+      await _loadApiSettings(); 
+      _api = OpenRouterClient(); // Инициализация _api ПОСЛЕ загрузки настроек
+      _log('OpenRouterClient instantiated after API settings loaded.');
       await _loadModels();
       _log('Models loaded: ${_availableModels.length}');
       await _loadBalance();
@@ -78,32 +73,47 @@ class ChatProvider with ChangeNotifier {
     } catch (e, stackTrace) {
       _log('Error initializing provider: $e');
       _log('Stack trace: $stackTrace');
+      // Если _api не инициализировано, методы типа _loadModels могут вызвать ошибку late initialization
+      // Добавим обработку, чтобы приложение не падало, если ключ не загружен и _api не создан
+      _availableModels = [];
+      _currentModel = null;
+      _balance = 'Error';
+      notifyListeners(); 
     }
   }
 
   Future<void> _loadApiSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    _selectedProvider = prefs.getString(selectedProviderKey) ?? providerOpenRouter;
-    _openRouterApiKey = prefs.getString(openRouterApiKeyId) ?? '';
-    _vseGptApiKey = prefs.getString(vseGptApiKeyId) ?? '';
+    _selectedProvider = prefs.getString(activeProviderKey) ?? providerOpenRouter;
+    _apiKey = prefs.getString(apiKeyKey) ?? '';
 
-    if (_selectedProvider == providerOpenRouter) {
-      dotenv.env['OPENROUTER_API_KEY'] = _openRouterApiKey;
-    } else if (_selectedProvider == providerVseGpt) {
-      dotenv.env['OPENROUTER_API_KEY'] = _vseGptApiKey;
+    if (_apiKey.isNotEmpty) {
+      dotenv.env['OPENROUTER_API_KEY'] = _apiKey;
+      _log('API key for $_selectedProvider loaded into dotenv. Key: $_apiKey');
+    } else {
+      _log('API key not found in SharedPreferences or is empty.');
+      dotenv.env.remove('OPENROUTER_API_KEY');
     }
   }
 
   Future<void> apiSettingsUpdated() async {
     _log('API settings updated notification received.');
-    await _loadApiSettings();
-    _api = OpenRouterClient();
-    await _loadModels();
-    await _loadBalance();
-    notifyListeners();
+    await _loadApiSettings(); 
+    _api = OpenRouterClient(); 
+    _log('OpenRouterClient re-instantiated after API settings update.');
+    await _loadModels();    
+    await _loadBalance();   
+    notifyListeners();      
   }
 
   Future<void> _loadModels() async {
+    if (!(_apiKey.isNotEmpty)) { // Проверка, что _apiKey загружен
+      _log('Cannot load models: API key is missing.');
+      _availableModels = [];
+      _currentModel = null;
+      notifyListeners();
+      return;
+    }
     try {
       _availableModels = await _api.getModels();
       _availableModels.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
@@ -120,6 +130,12 @@ class ChatProvider with ChangeNotifier {
   }
 
   Future<void> _loadBalance() async {
+     if (!(_apiKey.isNotEmpty)) { // Проверка, что _apiKey загружен
+      _log('Cannot load balance: API key is missing.');
+      _balance = '\$0.00 (API Key Missing)';
+      notifyListeners();
+      return;
+    }
     try {
       _balance = await _api.getBalance();
       notifyListeners();
@@ -150,6 +166,15 @@ class ChatProvider with ChangeNotifier {
   }
 
   Future<void> sendMessage(String content, {bool trackAnalytics = true}) async {
+    if (!(_apiKey.isNotEmpty)) { // Проверка, что _apiKey загружен
+      _log('Cannot send message: API key is missing.');
+       final errorMessage = ChatMessage(content: 'Ошибка: API ключ не настроен или отсутствует.', isUser: false, modelId: _currentModel);
+      _messages.add(errorMessage);
+      // await _saveMessage(errorMessage); // Не сохраняем системные ошибки отсутствия ключа в историю
+      _isLoading = false;
+      notifyListeners();
+      return;
+    }
     if (content.trim().isEmpty || _currentModel == null) return;
     _isLoading = true;
     notifyListeners();
@@ -166,7 +191,8 @@ class ChatProvider with ChangeNotifier {
       final responseTime = DateTime.now().difference(startTime).inMilliseconds / 1000;
 
       if (response.containsKey('error')) {
-        final errorMessage = ChatMessage(content: utf8.decode(utf8.encode('Error: ${response['error']}')), isUser: false, modelId: _currentModel);
+        final errorMessageText = response['error'] is Map ? response['error']['message'] ?? response['error'].toString() : response['error'].toString();
+        final errorMessage = ChatMessage(content: utf8.decode(utf8.encode('Error: $errorMessageText')), isUser: false, modelId: _currentModel);
         _messages.add(errorMessage);
         await _saveMessage(errorMessage);
       } else if (response.containsKey('choices') &&
@@ -262,14 +288,26 @@ class ChatProvider with ChangeNotifier {
   }
 
   String formatPricing(double pricing) {
-    return _api.formatPricing(pricing);
+    // Проверка, инициализирован ли _api, перед его использованием
+    if (this.isInitialized()) { // Предполагается, что isInitialized() - это геттер, который вы добавите
+        return _api.formatPricing(pricing);
+    }
+    return "API not ready"; // Или другое значение по умолчанию
+  }
+   // Добавьте этот геттер, чтобы проверить, был ли _api инициализирован
+  bool isInitialized() {
+    // Простой способ проверить - посмотреть, не пустой ли _apiKey, 
+    // так как _api инициализируется только если _apiKey есть.
+    // Более надежно - проверять сам _api, если он может быть null или иметь состояние.
+    // В данном случае, так как _api - late, обращение к нему до инициализации вызовет ошибку.
+    // Поэтому, проверка _apiKey косвенно говорит об инициализации _api.
+    return _apiKey.isNotEmpty; 
   }
 
   Future<Map<String, dynamic>> exportHistory() async {
     final dbStats = await _db.getStatistics();
-    final analyticsStats = _analytics.getStatistics(); // Общая статистика
+    final analyticsStats = _analytics.getStatistics(); 
     final sessionData = _analytics.exportSessionData();
-    // modelEfficiency здесь возвращает Map<String, double> (среднее), а не Map<String, Map<String, int>>
     final modelEfficiency = _analytics.getModelEfficiency(); 
     final responseTimeStats = _analytics.getResponseTimeStats();
     final messageLengthStats = _analytics.getMessageLengthStats();
@@ -278,8 +316,8 @@ class ChatProvider with ChangeNotifier {
       'database_stats': dbStats,
       'analytics_stats': analyticsStats,
       'session_data': sessionData,
-      'model_efficiency': modelEfficiency, // Это средние значения, не детальная статистика по токенам
-      'model_usage_detailed': _analytics.getModelUsageStatistics(), // Добавляем детальную статистику сюда
+      'model_efficiency': modelEfficiency,
+      'model_usage_detailed': _analytics.getModelUsageStatistics(), 
       'response_time_stats': responseTimeStats,
       'message_length_stats': messageLengthStats,
     };
