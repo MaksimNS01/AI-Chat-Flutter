@@ -51,10 +51,16 @@ class ChatProvider with ChangeNotifier {
   String? get baseUrl => _api.baseUrl; 
 
   // Геттер для статистики использования токенов моделями
-  // Теперь АСИНХРОННЫЙ, так как данные извлекаются из БД
   Future<Map<String, Map<String, int>>> get modelTokenUsageStats async {
     final stats = await _analytics.getModelUsageStatistics();
     return stats;
+  }
+
+  // Новый геттер для получения данных для графика расходов
+  Future<List<Map<String, dynamic>>> get dailyUsageStats async {
+    // Можно передать параметр daysLimit, если нужно сделать его настраиваемым
+    // например, _db.getDailyUsageStats(daysLimit: 30)
+    return await _db.getDailyUsageStats();
   }
 
   ChatProvider() {
@@ -161,15 +167,11 @@ class ChatProvider with ChangeNotifier {
   Future<void> _saveMessage(ChatMessage message) async {
     try {
       await _db.saveMessage(message);
-      // После сохранения сообщения, также трекаем его для статистики
       if (!message.isUser && message.modelId != null && message.tokens != null) {
-        // Предполагаем, что responseTime для AI сообщений здесь не так важен,
-        // или его нужно передавать в ChatMessage, если он есть.
-        // Для базовой статистики токенов это не нужно.
         await _analytics.trackMessage(
           model: message.modelId!,
-          messageLength: message.content.length, // Длина AI ответа
-          responseTime: 0, // Заглушка, или нужно передавать реальное время
+          messageLength: message.content.length, 
+          responseTime: 0, 
           tokensUsed: message.tokens!,
         );
       }
@@ -191,14 +193,13 @@ class ChatProvider with ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
-    final userMessage = ChatMessage(content: content, isUser: true, modelId: _currentModel); // Определяем userMessage здесь
+    final userMessage = ChatMessage(content: content, isUser: true, modelId: _currentModel); 
 
     try {
       content = utf8.decode(utf8.encode(content));
-      // Сохраняем сообщение пользователя сразу
       _messages.add(userMessage);
       notifyListeners();
-      await _saveMessage(userMessage); // _saveMessage теперь не трекает пользовательские сообщения для AnalyticsService
+      await _saveMessage(userMessage); 
 
       final startTime = DateTime.now();
       final response = await _api.sendMessage(content, _currentModel!);
@@ -208,7 +209,7 @@ class ChatProvider with ChangeNotifier {
         final errorMessageText = response['error'] is Map ? response['error']['message'] ?? response['error'].toString() : response['error'].toString();
         final aiErrorMessage = ChatMessage(content: utf8.decode(utf8.encode('Error: $errorMessageText')), isUser: false, modelId: _currentModel);
         _messages.add(aiErrorMessage);
-        await _saveMessage(aiErrorMessage); // Сохраняем AI ошибку (статистика не трекается для ошибок)
+        await _saveMessage(aiErrorMessage); 
       } else if (response.containsKey('choices') &&
           response['choices'] is List &&
           response['choices'].isNotEmpty &&
@@ -218,11 +219,6 @@ class ChatProvider with ChangeNotifier {
           response['choices'][0]['message'].containsKey('content')) {
         final aiContent = utf8.decode(utf8.encode(response['choices'][0]['message']['content'] as String));
         final tokensInResponse = response['usage']?['total_tokens'] as int? ?? 0;
-
-        // Аналитика для AI сообщения трекается теперь внутри _saveMessage для AI сообщения
-        // if (trackAnalytics) { 
-        //  await _analytics.trackMessage(model: _currentModel!, messageLength: content.length, responseTime: responseTime, tokensUsed: tokensInResponse);
-        // } 
 
         final promptTokens = response['usage']?['prompt_tokens'] ?? 0;
         final completionTokens = response['usage']?['completion_tokens'] ?? 0;
@@ -239,7 +235,7 @@ class ChatProvider with ChangeNotifier {
 
         final aiMessage = ChatMessage(content: aiContent, isUser: false, modelId: _currentModel, tokens: tokensInResponse, cost: cost);
         _messages.add(aiMessage);
-        await _saveMessage(aiMessage); // _saveMessage теперь трекает AI сообщения
+        await _saveMessage(aiMessage); 
         await _loadBalance();
       } else {
         throw Exception('Invalid API response format');
@@ -248,7 +244,7 @@ class ChatProvider with ChangeNotifier {
       _log('Error sending message: $e');
       final catchErrorMessage = ChatMessage(content: utf8.decode(utf8.encode('Error: $e')), isUser: false, modelId: _currentModel);
       _messages.add(catchErrorMessage);
-      await _saveMessage(catchErrorMessage); // Сохраняем AI ошибку (статистика не трекается для ошибок)
+      await _saveMessage(catchErrorMessage); 
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -263,7 +259,7 @@ class ChatProvider with ChangeNotifier {
   Future<void> clearHistory() async {
     _messages.clear();
     await _db.clearHistory();
-    await _analytics.clearData(); // Это также очистит статистику в БД
+    await _analytics.clearData(); 
     notifyListeners();
   }
 

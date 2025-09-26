@@ -63,53 +63,19 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 2, // <<< Увеличена версия БД
+      version: 2, 
       onCreate: (Database db, int version) async {
         await _createMessagesTable(db);
         await _createModelUsageStatsTable(db);
       },
       onUpgrade: (Database db, int oldVersion, int newVersion) async {
         if (oldVersion < 2) {
-          // Если обновляемся с версии, где таблицы model_usage_stats не было
           await _createModelUsageStatsTable(db);
-          // Опционально: можно попытаться заполнить model_usage_stats
-          // данными из существующей таблицы messages, если это нужно.
-          // Например, так:
-          // await _populateModelUsageStatsFromMessages(db);
+          // await _populateModelUsageStatsFromMessages(db); // Раскомментируйте, если нужна миграция
         }
       },
     );
   }
-
-  // Опциональный метод для миграции данных, если нужно
-  // Future<void> _populateModelUsageStatsFromMessages(Database db) async {
-  //   try {
-  //     final List<Map<String, dynamic>> messagesStats = await db.rawQuery('''
-  //       SELECT 
-  //         model_id,
-  //         COUNT(*) as count,
-  //         SUM(tokens) as tokens
-  //       FROM messages 
-  //       WHERE model_id IS NOT NULL AND tokens IS NOT NULL
-  //       GROUP BY model_id
-  //     ''');
-  //     for (final stat in messagesStats) {
-  //       final modelId = stat['model_id'] as String?;
-  //       final count = stat['count'] as int? ?? 0;
-  //       final tokens = stat['tokens'] as int? ?? 0;
-  //       if (modelId != null) {
-  //         await db.insert(
-  //           'model_usage_stats',
-  //           {'model_id': modelId, 'message_count': count, 'total_tokens': tokens},
-  //           conflictAlgorithm: ConflictAlgorithm.replace,
-  //         );
-  //       }
-  //     }
-  //     debugPrint('Successfully populated model_usage_stats from messages table.');
-  //   } catch (e) {
-  //     debugPrint('Error populating model_usage_stats from messages: $e');
-  //   }
-  // }
 
   Future<void> saveMessage(ChatMessage message) async {
     try {
@@ -131,7 +97,7 @@ class DatabaseService {
     }
   }
 
-  Future<List<ChatMessage>> getMessages({int limit = 1000}) async { // Increased limit for fuller history consistency
+  Future<List<ChatMessage>> getMessages({int limit = 1000}) async {
     try {
       final db = await database;
       final List<Map<String, dynamic>> maps = await db.query(
@@ -160,17 +126,18 @@ class DatabaseService {
     try {
       final db = await database;
       await db.delete('messages');
+      // При очистке истории сообщений, также очистим и статистику использования моделей
+      // Это уже делается в ChatProvider через AnalyticsService, но для полной уверенности можно и здесь, 
+      // если DatabaseService должен быть полностью автономен в этом плане.
+      // await clearModelUsageStats(); // <- Если раскомментировать, то AnalyticsService.clearData не должен повторно это делать
     } catch (e) {
       debugPrint('Error clearing history: $e');
     }
   }
 
-  //--------- Методы для model_usage_stats ----------
-
   Future<void> updateModelUsage({required String model, required int tokensUsed}) async {
     try {
       final db = await database;
-      // Используем транзакцию для атомарности
       await db.transaction((txn) async {
         final List<Map<String, dynamic>> existing = await txn.query(
           'model_usage_stats',
@@ -234,9 +201,6 @@ class DatabaseService {
     }
   }
 
-  // Старый метод getStatistics, который агрегирует из таблицы messages.
-  // Он может быть не нужен, если AnalyticsService теперь главный источник статистики.
-  // Оставляю его пока для справки или если он где-то используется напрямую.
   Future<Map<String, dynamic>> getStatistics() async {
     try {
       final db = await database;
@@ -254,7 +218,7 @@ class DatabaseService {
           COUNT(*) as message_count,
           SUM(tokens) as total_tokens
         FROM messages 
-        WHERE model_id IS NOT NULL 
+        WHERE model_id IS NOT NULL AND is_user = 0 -- Считаем только AI сообщения для статистики использования
         GROUP BY model_id
       ''');
 
@@ -268,8 +232,8 @@ class DatabaseService {
       }
 
       return {
-        'total_messages': totalMessages,
-        'total_tokens': totalTokens,
+        'total_messages': totalMessages, 
+        'total_tokens': totalTokens, 
         'model_usage': modelUsage,
       };
     } catch (e) {
@@ -280,5 +244,45 @@ class DatabaseService {
         'model_usage': {},
       };
     }
+  }
+  
+  // Новый метод для получения ежедневной статистики расходов
+  Future<List<Map<String, dynamic>>> getDailyUsageStats({int daysLimit = 30}) async {
+    final List<Map<String, dynamic>> dailyStats = [];
+    try {
+      final db = await database;
+      
+      final String query = '''
+        SELECT 
+          strftime('%Y-%m-%d', timestamp) as date,
+          SUM(CASE WHEN is_user = 0 THEN cost ELSE 0 END) as total_cost,
+          SUM(CASE WHEN is_user = 0 THEN tokens ELSE 0 END) as total_tokens,
+          SUM(CASE WHEN is_user = 0 THEN 1 ELSE 0 END) as message_count,
+          GROUP_CONCAT(DISTINCT CASE WHEN is_user = 0 THEN model_id ELSE NULL END) as models_used_raw
+        FROM messages
+        WHERE timestamp >= date('now', '-$daysLimit days') -- Фильтруем за последние Х дней
+        GROUP BY date
+        ORDER BY date ASC -- Сортируем по дате для графика
+      ''';
+      // Было ORDER BY date DESC LIMIT $daysLimit, изменил на ASC и фильтр по дате в WHERE
+
+      final List<Map<String, dynamic>> result = await db.rawQuery(query);
+
+      for (final row in result) {
+        dailyStats.add({
+          'date': row['date'] as String, 
+          'total_cost': (row['total_cost'] as num?)?.toDouble() ?? 0.0,
+          'total_tokens': (row['total_tokens'] as num?)?.toInt() ?? 0,
+          'message_count': (row['message_count'] as num?)?.toInt() ?? 0,
+          'models_used_raw': row['models_used_raw'] as String?, 
+        });
+      }
+      // Сортировка теперь делается в SQL (ORDER BY date ASC)
+      // dailyStats.sort((a, b) => (a['date'] as String).compareTo(b['date'] as String));
+
+    } catch (e) {
+      debugPrint('Error getting daily usage stats: $e');
+    }
+    return dailyStats;
   }
 }

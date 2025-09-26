@@ -9,7 +9,8 @@ import 'screens/chat_screen.dart';
 import 'screens/settings_screen.dart'; // Initial API Key Setup
 import 'screens/pin_screen.dart'; // Added
 import 'screens/token_stats_screen.dart';
-import 'screens/expenses_chart_screen.dart';
+import 'screens/provider_settings_screen.dart';
+import 'screens/cost_chart_screen.dart';
 
 // Ключи для SharedPreferences (должны совпадать с теми, что в settings_screen.dart и pin_screen.dart)
 const String apiKeyKey = 'api_key';
@@ -217,8 +218,8 @@ class _MainAppShellState extends State<MainAppShell> {
   static const List<Widget> _widgetOptions = <Widget>[
     ChatScreen(),
     TokenStatsScreen(),
-    ExpensesChartScreen(),
-    // Если понадобится экран настроек ВНУТРИ приложения (не начальных), его можно добавить сюда
+    CostChartScreen(),
+    ProviderSettingsScreen(),
   ];
 
   void _onItemTapped(int index) {
@@ -247,7 +248,10 @@ class _MainAppShellState extends State<MainAppShell> {
             icon: Icon(Icons.show_chart_outlined),
             label: 'Расходы',
           ),
-          // Если понадобится вкладка настроек ВНУТРИ приложения, ее можно добавить сюда
+          BottomNavigationBarItem(
+            icon: Icon(Icons.perm_data_setting),
+            label: 'Настройки',
+          ),
         ],
         currentIndex: _selectedIndex,
         onTap: _onItemTapped,

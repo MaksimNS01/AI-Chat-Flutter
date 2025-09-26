@@ -10,9 +10,6 @@ import 'package:google_fonts/google_fonts.dart';
 import '../providers/chat_provider.dart';
 // Импорт модели сообщения
 import '../models/message.dart';
-// Импорт настроек
-// import './settings_screen.dart'; // Если этот импорт больше не нужен напрямую
-import './provider_settings_screen.dart'; // <<<--- Убедитесь, что этот импорт есть
 
 // Виджет для обработки ошибок в UI
 class ErrorBoundary extends StatelessWidget {
@@ -511,12 +508,6 @@ class _ChatScreenState extends State<ChatScreen> {
           case 'clear':
             _showClearHistoryDialog(context);
             break;
-          case 'provider_settings': // <<<--- НОВЫЙ CASE
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const ProviderSettingsScreen()),
-            );
-            break;
         }
       },
       itemBuilder: (BuildContext context) => [
@@ -537,11 +528,6 @@ class _ChatScreenState extends State<ChatScreen> {
           height: 40,
           child: Text('Очистить историю',
               style: TextStyle(color: Colors.white, fontSize: 12)),
-        ),
-        const PopupMenuItem<String>( // <<<--- НОВЫЙ ПУНКТ МЕНЮ
-          value: 'provider_settings',
-          height: 40, // или какая у вас стандартная высота
-          child: Text('Настройки', style: TextStyle(color: Colors.white, fontSize: 12)),
         ),
       ],
     );
