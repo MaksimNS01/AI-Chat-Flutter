@@ -13,137 +13,241 @@ import '../models/message.dart';
 
 // Класс сервиса для работы с базой данных
 class DatabaseService {
-  // Единственный экземпляр класса (Singleton)
   static final DatabaseService _instance = DatabaseService._internal();
-  // Экземпляр базы данных
   static Database? _database;
 
-  // Фабричный метод для получения экземпляра
   factory DatabaseService() {
     return _instance;
   }
 
-  // Приватный конструктор для реализации Singleton
   DatabaseService._internal();
 
-  // Геттер для получения экземпляра базы данных
   Future<Database> get database async {
-    if (_database != null) return _database!; // Возврат существующей БД
-    _database = await _initDatabase(); // Инициализация новой БД
+    if (_database != null) return _database!;
+    _database = await _initDatabase();
     return _database!;
   }
 
-  // Метод инициализации базы данных
+  Future<void> _createMessagesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT NOT NULL,
+        is_user INTEGER NOT NULL,
+        timestamp TEXT NOT NULL,
+        model_id TEXT,
+        tokens INTEGER,
+        cost REAL
+      )
+    ''');
+  }
+
+  Future<void> _createModelUsageStatsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE model_usage_stats (
+        model_id TEXT PRIMARY KEY,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        message_count INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+  }
+
   Future<Database> _initDatabase() async {
-    // Инициализация FFI для desktop платформ
     if (Platform.isWindows || Platform.isLinux) {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
     }
 
-    // Получение пути к базе данных
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'chat_cache.db'); // Имя файла базы данных
+    final path = join(dbPath, 'chat_cache.db');
 
-    // Открытие/создание базы данных
     return await openDatabase(
       path,
-      version: 1,
+      version: 2, // <<< Увеличена версия БД
       onCreate: (Database db, int version) async {
-        // Создание таблицы messages при первом запуске
-        await db.execute('''
-          CREATE TABLE messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content TEXT NOT NULL,
-            is_user INTEGER NOT NULL,
-            timestamp TEXT NOT NULL,
-            model_id TEXT,
-            tokens INTEGER,
-            cost REAL
-          )
-        ''');
+        await _createMessagesTable(db);
+        await _createModelUsageStatsTable(db);
+      },
+      onUpgrade: (Database db, int oldVersion, int newVersion) async {
+        if (oldVersion < 2) {
+          // Если обновляемся с версии, где таблицы model_usage_stats не было
+          await _createModelUsageStatsTable(db);
+          // Опционально: можно попытаться заполнить model_usage_stats
+          // данными из существующей таблицы messages, если это нужно.
+          // Например, так:
+          // await _populateModelUsageStatsFromMessages(db);
+        }
       },
     );
   }
 
-  // Метод сохранения сообщения в базу данных
+  // Опциональный метод для миграции данных, если нужно
+  // Future<void> _populateModelUsageStatsFromMessages(Database db) async {
+  //   try {
+  //     final List<Map<String, dynamic>> messagesStats = await db.rawQuery('''
+  //       SELECT 
+  //         model_id,
+  //         COUNT(*) as count,
+  //         SUM(tokens) as tokens
+  //       FROM messages 
+  //       WHERE model_id IS NOT NULL AND tokens IS NOT NULL
+  //       GROUP BY model_id
+  //     ''');
+  //     for (final stat in messagesStats) {
+  //       final modelId = stat['model_id'] as String?;
+  //       final count = stat['count'] as int? ?? 0;
+  //       final tokens = stat['tokens'] as int? ?? 0;
+  //       if (modelId != null) {
+  //         await db.insert(
+  //           'model_usage_stats',
+  //           {'model_id': modelId, 'message_count': count, 'total_tokens': tokens},
+  //           conflictAlgorithm: ConflictAlgorithm.replace,
+  //         );
+  //       }
+  //     }
+  //     debugPrint('Successfully populated model_usage_stats from messages table.');
+  //   } catch (e) {
+  //     debugPrint('Error populating model_usage_stats from messages: $e');
+  //   }
+  // }
+
   Future<void> saveMessage(ChatMessage message) async {
     try {
       final db = await database;
-      // Вставка данных в таблицу messages
       await db.insert(
         'messages',
         {
-          'content': message.content, // Текст сообщения
-          'is_user': message.isUser ? 1 : 0, // Преобразование bool в int
-          'timestamp': message.timestamp.toIso8601String(), // Временная метка
-          'model_id': message.modelId, // Идентификатор модели
-          'tokens': message.tokens, // Количество токенов
-          'cost': message.cost, // Стоимость запроса
+          'content': message.content,
+          'is_user': message.isUser ? 1 : 0,
+          'timestamp': message.timestamp.toIso8601String(),
+          'model_id': message.modelId,
+          'tokens': message.tokens,
+          'cost': message.cost,
         },
-        conflictAlgorithm:
-            ConflictAlgorithm.replace, // Стратегия при конфликтах
+        conflictAlgorithm: ConflictAlgorithm.replace,
       );
     } catch (e) {
-      debugPrint('Error saving message: $e'); // Логирование ошибок
+      debugPrint('Error saving message: $e');
     }
   }
 
-  // Метод получения сообщений из базы данных
-  Future<List<ChatMessage>> getMessages({int limit = 50}) async {
+  Future<List<ChatMessage>> getMessages({int limit = 1000}) async { // Increased limit for fuller history consistency
     try {
       final db = await database;
-      // Запрос данных из таблицы messages
       final List<Map<String, dynamic>> maps = await db.query(
         'messages',
-        orderBy: 'timestamp ASC', // Сортировка по времени
-        limit: limit, // Ограничение количества записей
+        orderBy: 'timestamp ASC',
+        limit: limit, 
       );
 
-      // Преобразование данных в объекты ChatMessage
       return List.generate(maps.length, (i) {
         return ChatMessage(
-          content: maps[i]['content'] as String, // Текст сообщения
-          isUser: maps[i]['is_user'] == 1, // Преобразование int в bool
-          timestamp:
-              DateTime.parse(maps[i]['timestamp'] as String), // Временная метка
-          modelId: maps[i]['model_id'] as String?, // Идентификатор модели
-          tokens: maps[i]['tokens'] as int?, // Количество токенов
-          cost: maps[i]['cost'] as double?, // Стоимость запроса
+          content: maps[i]['content'] as String,
+          isUser: maps[i]['is_user'] == 1,
+          timestamp: DateTime.parse(maps[i]['timestamp'] as String),
+          modelId: maps[i]['model_id'] as String?,
+          tokens: maps[i]['tokens'] as int?,
+          cost: maps[i]['cost'] as double?,
         );
       });
     } catch (e) {
-      debugPrint('Error getting messages: $e'); // Логирование ошибок
-      return []; // Возврат пустого списка в случае ошибки
+      debugPrint('Error getting messages: $e');
+      return [];
     }
   }
 
-  // Метод очистки истории сообщений
   Future<void> clearHistory() async {
     try {
       final db = await database;
-      await db.delete('messages'); // Удаление всех записей из таблицы
+      await db.delete('messages');
     } catch (e) {
-      debugPrint('Error clearing history: $e'); // Логирование ошибок
+      debugPrint('Error clearing history: $e');
     }
   }
 
-  // Метод получения статистики по сообщениям
+  //--------- Методы для model_usage_stats ----------
+
+  Future<void> updateModelUsage({required String model, required int tokensUsed}) async {
+    try {
+      final db = await database;
+      // Используем транзакцию для атомарности
+      await db.transaction((txn) async {
+        final List<Map<String, dynamic>> existing = await txn.query(
+          'model_usage_stats',
+          where: 'model_id = ?',
+          whereArgs: [model],
+        );
+
+        if (existing.isNotEmpty) {
+          int currentTokens = existing.first['total_tokens'] as int? ?? 0;
+          int currentCount = existing.first['message_count'] as int? ?? 0;
+          await txn.update(
+            'model_usage_stats',
+            {
+              'total_tokens': currentTokens + tokensUsed,
+              'message_count': currentCount + 1,
+            },
+            where: 'model_id = ?',
+            whereArgs: [model],
+          );
+        } else {
+          await txn.insert(
+            'model_usage_stats',
+            {
+              'model_id': model,
+              'total_tokens': tokensUsed,
+              'message_count': 1,
+            },
+          );
+        }
+      });
+    } catch (e) {
+      debugPrint('Error updating model usage for $model: $e');
+    }
+  }
+
+  Future<Map<String, Map<String, int>>> getAllModelUsageStats() async {
+    final stats = <String, Map<String, int>>{};
+    try {
+      final db = await database;
+      final List<Map<String, dynamic>> result = await db.query('model_usage_stats');
+
+      for (final row in result) {
+        final modelId = row['model_id'] as String;
+        stats[modelId] = {
+          'tokens': row['total_tokens'] as int? ?? 0,
+          'count': row['message_count'] as int? ?? 0,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error getting all model usage stats: $e');
+    }
+    return stats;
+  }
+
+  Future<void> clearModelUsageStats() async {
+    try {
+      final db = await database;
+      await db.delete('model_usage_stats');
+    } catch (e) {
+      debugPrint('Error clearing model usage stats: $e');
+    }
+  }
+
+  // Старый метод getStatistics, который агрегирует из таблицы messages.
+  // Он может быть не нужен, если AnalyticsService теперь главный источник статистики.
+  // Оставляю его пока для справки или если он где-то используется напрямую.
   Future<Map<String, dynamic>> getStatistics() async {
     try {
       final db = await database;
-
-      // Получение общего количества сообщений
       final totalMessagesResult =
           await db.rawQuery('SELECT COUNT(*) as count FROM messages');
       final totalMessages = Sqflite.firstIntValue(totalMessagesResult) ?? 0;
 
-      // Получение общего количества токенов
       final totalTokensResult = await db.rawQuery(
           'SELECT SUM(tokens) as total FROM messages WHERE tokens IS NOT NULL');
       final totalTokens = Sqflite.firstIntValue(totalTokensResult) ?? 0;
 
-      // Получение статистики использования моделей
       final modelStats = await db.rawQuery('''
         SELECT 
           model_id,
@@ -154,24 +258,22 @@ class DatabaseService {
         GROUP BY model_id
       ''');
 
-      // Формирование данных по использованию моделей
       final modelUsage = <String, Map<String, int>>{};
       for (final stat in modelStats) {
         final modelId = stat['model_id'] as String;
         modelUsage[modelId] = {
-          'count': stat['message_count'] as int, // Количество сообщений
-          'tokens':
-              stat['total_tokens'] as int? ?? 0, // Общее количество токенов
+          'count': stat['message_count'] as int,
+          'tokens': stat['total_tokens'] as int? ?? 0,
         };
       }
 
       return {
-        'total_messages': totalMessages, // Общее количество сообщений
-        'total_tokens': totalTokens, // Общее количество токенов
-        'model_usage': modelUsage, // Статистика по моделям
+        'total_messages': totalMessages,
+        'total_tokens': totalTokens,
+        'model_usage': modelUsage,
       };
     } catch (e) {
-      debugPrint('Error getting statistics: $e'); // Логирование ошибок
+      debugPrint('Error getting statistics from messages table: $e');
       return {
         'total_messages': 0,
         'total_tokens': 0,

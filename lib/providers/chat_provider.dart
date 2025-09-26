@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 // Импорт SharedPreferences для хранения настроек
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'dart:async'; // Для Future
 
 // Импорт модели сообщения
 import '../models/message.dart';
@@ -23,7 +24,7 @@ import '../screens/settings_screen.dart';
 
 // Основной класс провайдера для управления состоянием чата
 class ChatProvider with ChangeNotifier {
-  late OpenRouterClient _api; // Изменено: используется late для отложенной инициализации
+  late OpenRouterClient _api; 
   final List<ChatMessage> _messages = [];
   final List<String> _debugLogs = [];
   List<Map<String, dynamic>> _availableModels = [];
@@ -47,11 +48,13 @@ class ChatProvider with ChangeNotifier {
   String? get currentModel => _currentModel;
   String get balance => _balance;
   bool get isLoading => _isLoading;
-  String? get baseUrl => _api.baseUrl; // Доступ к _api только после инициализации
+  String? get baseUrl => _api.baseUrl; 
 
-  Map<String, dynamic> get modelTokenUsageStats {
-    final stats = _analytics.getModelUsageStatistics();
-    return stats; 
+  // Геттер для статистики использования токенов моделями
+  // Теперь АСИНХРОННЫЙ, так как данные извлекаются из БД
+  Future<Map<String, Map<String, int>>> get modelTokenUsageStats async {
+    final stats = await _analytics.getModelUsageStatistics();
+    return stats;
   }
 
   ChatProvider() {
@@ -62,7 +65,7 @@ class ChatProvider with ChangeNotifier {
     try {
       _log('Initializing provider...');
       await _loadApiSettings(); 
-      _api = OpenRouterClient(); // Инициализация _api ПОСЛЕ загрузки настроек
+      _api = OpenRouterClient(); 
       _log('OpenRouterClient instantiated after API settings loaded.');
       await _loadModels();
       _log('Models loaded: ${_availableModels.length}');
@@ -73,8 +76,6 @@ class ChatProvider with ChangeNotifier {
     } catch (e, stackTrace) {
       _log('Error initializing provider: $e');
       _log('Stack trace: $stackTrace');
-      // Если _api не инициализировано, методы типа _loadModels могут вызвать ошибку late initialization
-      // Добавим обработку, чтобы приложение не падало, если ключ не загружен и _api не создан
       _availableModels = [];
       _currentModel = null;
       _balance = 'Error';
@@ -107,7 +108,7 @@ class ChatProvider with ChangeNotifier {
   }
 
   Future<void> _loadModels() async {
-    if (!(_apiKey.isNotEmpty)) { // Проверка, что _apiKey загружен
+    if (!(_apiKey.isNotEmpty)) { 
       _log('Cannot load models: API key is missing.');
       _availableModels = [];
       _currentModel = null;
@@ -130,7 +131,7 @@ class ChatProvider with ChangeNotifier {
   }
 
   Future<void> _loadBalance() async {
-     if (!(_apiKey.isNotEmpty)) { // Проверка, что _apiKey загружен
+     if (!(_apiKey.isNotEmpty)) { 
       _log('Cannot load balance: API key is missing.');
       _balance = '\$0.00 (API Key Missing)';
       notifyListeners();
@@ -160,17 +161,28 @@ class ChatProvider with ChangeNotifier {
   Future<void> _saveMessage(ChatMessage message) async {
     try {
       await _db.saveMessage(message);
+      // После сохранения сообщения, также трекаем его для статистики
+      if (!message.isUser && message.modelId != null && message.tokens != null) {
+        // Предполагаем, что responseTime для AI сообщений здесь не так важен,
+        // или его нужно передавать в ChatMessage, если он есть.
+        // Для базовой статистики токенов это не нужно.
+        await _analytics.trackMessage(
+          model: message.modelId!,
+          messageLength: message.content.length, // Длина AI ответа
+          responseTime: 0, // Заглушка, или нужно передавать реальное время
+          tokensUsed: message.tokens!,
+        );
+      }
     } catch (e) {
-      _log('Error saving message: $e');
+      _log('Error saving or tracking message: $e');
     }
   }
 
   Future<void> sendMessage(String content, {bool trackAnalytics = true}) async {
-    if (!(_apiKey.isNotEmpty)) { // Проверка, что _apiKey загружен
+    if (!(_apiKey.isNotEmpty)) { 
       _log('Cannot send message: API key is missing.');
        final errorMessage = ChatMessage(content: 'Ошибка: API ключ не настроен или отсутствует.', isUser: false, modelId: _currentModel);
       _messages.add(errorMessage);
-      // await _saveMessage(errorMessage); // Не сохраняем системные ошибки отсутствия ключа в историю
       _isLoading = false;
       notifyListeners();
       return;
@@ -179,12 +191,14 @@ class ChatProvider with ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
+    final userMessage = ChatMessage(content: content, isUser: true, modelId: _currentModel); // Определяем userMessage здесь
+
     try {
       content = utf8.decode(utf8.encode(content));
-      final userMessage = ChatMessage(content: content, isUser: true, modelId: _currentModel);
+      // Сохраняем сообщение пользователя сразу
       _messages.add(userMessage);
       notifyListeners();
-      await _saveMessage(userMessage);
+      await _saveMessage(userMessage); // _saveMessage теперь не трекает пользовательские сообщения для AnalyticsService
 
       final startTime = DateTime.now();
       final response = await _api.sendMessage(content, _currentModel!);
@@ -192,9 +206,9 @@ class ChatProvider with ChangeNotifier {
 
       if (response.containsKey('error')) {
         final errorMessageText = response['error'] is Map ? response['error']['message'] ?? response['error'].toString() : response['error'].toString();
-        final errorMessage = ChatMessage(content: utf8.decode(utf8.encode('Error: $errorMessageText')), isUser: false, modelId: _currentModel);
-        _messages.add(errorMessage);
-        await _saveMessage(errorMessage);
+        final aiErrorMessage = ChatMessage(content: utf8.decode(utf8.encode('Error: $errorMessageText')), isUser: false, modelId: _currentModel);
+        _messages.add(aiErrorMessage);
+        await _saveMessage(aiErrorMessage); // Сохраняем AI ошибку (статистика не трекается для ошибок)
       } else if (response.containsKey('choices') &&
           response['choices'] is List &&
           response['choices'].isNotEmpty &&
@@ -205,9 +219,10 @@ class ChatProvider with ChangeNotifier {
         final aiContent = utf8.decode(utf8.encode(response['choices'][0]['message']['content'] as String));
         final tokensInResponse = response['usage']?['total_tokens'] as int? ?? 0;
 
-        if (trackAnalytics) {
-          _analytics.trackMessage(model: _currentModel!, messageLength: content.length, responseTime: responseTime, tokensUsed: tokensInResponse);
-        }
+        // Аналитика для AI сообщения трекается теперь внутри _saveMessage для AI сообщения
+        // if (trackAnalytics) { 
+        //  await _analytics.trackMessage(model: _currentModel!, messageLength: content.length, responseTime: responseTime, tokensUsed: tokensInResponse);
+        // } 
 
         final promptTokens = response['usage']?['prompt_tokens'] ?? 0;
         final completionTokens = response['usage']?['completion_tokens'] ?? 0;
@@ -224,16 +239,16 @@ class ChatProvider with ChangeNotifier {
 
         final aiMessage = ChatMessage(content: aiContent, isUser: false, modelId: _currentModel, tokens: tokensInResponse, cost: cost);
         _messages.add(aiMessage);
-        await _saveMessage(aiMessage);
+        await _saveMessage(aiMessage); // _saveMessage теперь трекает AI сообщения
         await _loadBalance();
       } else {
         throw Exception('Invalid API response format');
       }
     } catch (e) {
       _log('Error sending message: $e');
-      final errorMessage = ChatMessage(content: utf8.decode(utf8.encode('Error: $e')), isUser: false, modelId: _currentModel);
-      _messages.add(errorMessage);
-      await _saveMessage(errorMessage);
+      final catchErrorMessage = ChatMessage(content: utf8.decode(utf8.encode('Error: $e')), isUser: false, modelId: _currentModel);
+      _messages.add(catchErrorMessage);
+      await _saveMessage(catchErrorMessage); // Сохраняем AI ошибку (статистика не трекается для ошибок)
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -248,7 +263,7 @@ class ChatProvider with ChangeNotifier {
   Future<void> clearHistory() async {
     _messages.clear();
     await _db.clearHistory();
-    _analytics.clearData(); 
+    await _analytics.clearData(); // Это также очистит статистику в БД
     notifyListeners();
   }
 
@@ -288,36 +303,29 @@ class ChatProvider with ChangeNotifier {
   }
 
   String formatPricing(double pricing) {
-    // Проверка, инициализирован ли _api, перед его использованием
-    if (this.isInitialized()) { // Предполагается, что isInitialized() - это геттер, который вы добавите
+    if (this.isInitialized()) { 
         return _api.formatPricing(pricing);
     }
-    return "API not ready"; // Или другое значение по умолчанию
+    return "API not ready"; 
   }
-   // Добавьте этот геттер, чтобы проверить, был ли _api инициализирован
+
   bool isInitialized() {
-    // Простой способ проверить - посмотреть, не пустой ли _apiKey, 
-    // так как _api инициализируется только если _apiKey есть.
-    // Более надежно - проверять сам _api, если он может быть null или иметь состояние.
-    // В данном случае, так как _api - late, обращение к нему до инициализации вызовет ошибку.
-    // Поэтому, проверка _apiKey косвенно говорит об инициализации _api.
     return _apiKey.isNotEmpty; 
   }
 
   Future<Map<String, dynamic>> exportHistory() async {
-    final dbStats = await _db.getStatistics();
-    final analyticsStats = _analytics.getStatistics(); 
-    final sessionData = _analytics.exportSessionData();
-    final modelEfficiency = _analytics.getModelEfficiency(); 
-    final responseTimeStats = _analytics.getResponseTimeStats();
-    final messageLengthStats = _analytics.getMessageLengthStats();
+    final dbStats = await _db.getStatistics(); 
+    final Map<String, dynamic> analyticsStatsSnapshot = await _analytics.getStatistics(); 
+    final List<Map<String, dynamic>> sessionData = _analytics.exportSessionData(); 
+    final Map<String, double> modelEfficiencySnapshot = await _analytics.getModelEfficiency(); 
+    final Map<String, dynamic> responseTimeStats = _analytics.getResponseTimeStats();
+    final Map<String, dynamic> messageLengthStats = _analytics.getMessageLengthStats();
 
     return {
       'database_stats': dbStats,
-      'analytics_stats': analyticsStats,
+      'analytics_stats': analyticsStatsSnapshot, 
       'session_data': sessionData,
-      'model_efficiency': modelEfficiency,
-      'model_usage_detailed': _analytics.getModelUsageStatistics(), 
+      'model_efficiency': modelEfficiencySnapshot,
       'response_time_stats': responseTimeStats,
       'message_length_stats': messageLengthStats,
     };
