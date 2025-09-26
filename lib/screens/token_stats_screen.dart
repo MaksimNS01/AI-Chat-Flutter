@@ -34,7 +34,10 @@ class TokenStatsScreen extends StatelessWidget {
 
           if (!snapshot.hasData || snapshot.data == null || snapshot.data!.isEmpty) {
             return const Center(
-              child: Text('Нет данных по использованию токенов. Отправьте сообщения, чтобы собрать статистику.'),
+              child: Padding(
+                padding: EdgeInsets.all(16.0), // или EdgeInsets.symmetric(horizontal: 16.0)
+                child: Text('Нет данных по использованию токенов.'),
+              ),
             );
           }
 
