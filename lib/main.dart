@@ -241,7 +241,7 @@ class _MainAppShellState extends State<MainAppShell> {
             label: 'Чат',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.data_usage_outlined),
+            icon: Icon(Icons.token_outlined),
             label: 'Токены',
           ),
           BottomNavigationBarItem(
@@ -249,7 +249,7 @@ class _MainAppShellState extends State<MainAppShell> {
             label: 'Расходы',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.perm_data_setting),
+            icon: Icon(Icons.settings_sharp),
             label: 'Настройки',
           ),
         ],
